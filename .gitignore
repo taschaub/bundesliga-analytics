@@ -1,1 +1,11 @@
+__pycache__/
+*.pyc
+*.pyo
+venv/
+env/
 bund/
+.ipynb_checkpoints/
+*.log
+data/*.csv
+models/
+.env

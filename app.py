@@ -17,6 +17,18 @@ def load_data():
     data_prep = DataPreparator('data/bundesliga_matches.csv')
     return data_prep.prepare_data()
 
+def display_league_table(df: pd.DataFrame, current_date: pd.Timestamp):
+    """Display the league table up to the given date."""
+    feat_eng = FeatureEngineer(df)
+    table = feat_eng.calculate_league_table(current_date)
+    
+    # Format table for display
+    display_table = table[['Position', 'Points', 'Matches', 'Wins', 'Draws', 'Losses', 'GF', 'GA', 'GD', 'PPG']]
+    display_table = display_table.round(2)
+    
+    st.subheader("Current League Table")
+    st.dataframe(display_table)
+
 def main():
     st.title("Bundesliga Match Predictor")
     
@@ -69,6 +81,10 @@ def main():
             st.metric("Draw", f"{probs[1]:.1%}")
         with col3:
             st.metric("Away Win", f"{probs[0]:.1%}")
+        
+        # Display current league table
+        latest_date = df['Date'].max()
+        display_league_table(df, latest_date)
 
 if __name__ == "__main__":
     main() 
