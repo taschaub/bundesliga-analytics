@@ -1,90 +1,132 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-import joblib
-from src.data_preparation import DataPreparator
-from src.feature_engineering import FeatureEngineer
+from src.table_calculator import TableCalculator
 
-# Load model and data
-@st.cache_resource
-def load_model():
-    model = joblib.load('models/model.pkl')
-    feature_names = joblib.load('models/feature_names.pkl')
-    return model, feature_names
-
+# Load data
 @st.cache_data
 def load_data():
-    data_prep = DataPreparator('data/bundesliga_matches.csv')
-    return data_prep.prepare_data()
+    return pd.read_csv('data/bundesliga_matches_full.csv')
 
-def display_league_table(df: pd.DataFrame, current_date: pd.Timestamp):
-    """Display the league table up to the given date."""
-    feat_eng = FeatureEngineer(df)
-    table = feat_eng.calculate_league_table(current_date)
+def display_match_history(df: pd.DataFrame, home_team: str, away_team: str, before_date: pd.Timestamp):
+    """Display recent matches for both teams before a specific date."""
+    # Get last 5 matches for each team before the match date
+    home_matches = df[
+        ((df['HomeTeam'] == home_team) | (df['AwayTeam'] == home_team)) &
+        (df['Date'] < before_date)
+    ].sort_values('Date', ascending=False).head(5)
     
-    # Format table for display
-    display_table = table[['Position', 'Points', 'Matches', 'Wins', 'Draws', 'Losses', 'GF', 'GA', 'GD', 'PPG']]
-    display_table = display_table.round(2)
+    away_matches = df[
+        ((df['HomeTeam'] == away_team) | (df['AwayTeam'] == away_team)) &
+        (df['Date'] < before_date)
+    ].sort_values('Date', ascending=False).head(5)
     
-    st.subheader("Current League Table")
-    st.dataframe(display_table)
+    # Display home team's last matches
+    st.write(f"\n{home_team}'s last 5 matches:")
+    for _, match in home_matches.iterrows():
+        if match['HomeTeam'] == home_team:
+            result = f"{match['FTHG']} - {match['FTAG']} vs {match['AwayTeam']}"
+            if match['FTHG'] > match['FTAG']:
+                result += " (W)"
+            elif match['FTHG'] < match['FTAG']:
+                result += " (L)"
+            else:
+                result += " (D)"
+        else:
+            result = f"{match['FTAG']} - {match['FTHG']} vs {match['HomeTeam']}"
+            if match['FTAG'] > match['FTHG']:
+                result += " (W)"
+            elif match['FTAG'] < match['FTHG']:
+                result += " (L)"
+            else:
+                result += " (D)"
+        st.write(f"{pd.to_datetime(match['Date']).strftime('%Y-%m-%d')}: {result}")
+    
+    # Display away team's last matches
+    st.write(f"\n{away_team}'s last 5 matches:")
+    for _, match in away_matches.iterrows():
+        if match['HomeTeam'] == away_team:
+            result = f"{match['FTHG']} - {match['FTAG']} vs {match['AwayTeam']}"
+            if match['FTHG'] > match['FTAG']:
+                result += " (W)"
+            elif match['FTHG'] < match['FTAG']:
+                result += " (L)"
+            else:
+                result += " (D)"
+        else:
+            result = f"{match['FTAG']} - {match['FTHG']} vs {match['HomeTeam']}"
+            if match['FTAG'] > match['FTHG']:
+                result += " (W)"
+            elif match['FTAG'] < match['FTHG']:
+                result += " (L)"
+            else:
+                result += " (D)"
+        st.write(f"{pd.to_datetime(match['Date']).strftime('%Y-%m-%d')}: {result}")
 
 def main():
-    st.title("Bundesliga Match Predictor")
+    st.title("Bundesliga Match Analysis")
     
-    # Load model and data
-    model, feature_names = load_model()
+    # Load data
     df = load_data()
+    calculator = TableCalculator(df)
     
-    # Team selection
-    teams = sorted(df['HomeTeam'].unique())
-    col1, col2 = st.columns(2)
+    # Season selection
+    seasons = sorted(df['Season'].unique(), reverse=True)
+    selected_season = st.selectbox('Select Season', seasons)
     
-    with col1:
-        home_team = st.selectbox('Select Home Team', teams)
-    with col2:
-        away_team = st.selectbox('Select Away Team', teams)
+    # Matchday selection
+    season_data = df[df['Season'] == selected_season]
+    max_matchday = season_data['Matchday'].max()
+    selected_matchday = st.slider('Select Matchday', 1, max_matchday, max_matchday)
     
-    if home_team and away_team:
-        # Display recent form
-        st.subheader("Recent Form")
+    # Get matches for selected matchday
+    matchday_data = season_data[season_data['Matchday'] == selected_matchday]
+    
+    # Match selection
+    matches = [f"{row['HomeTeam']} vs {row['AwayTeam']}" for _, row in matchday_data.iterrows()]
+    selected_match = st.selectbox('Select Match', matches)
+    
+    if selected_match:
+        home_team, away_team = selected_match.split(' vs ')
+        match = matchday_data[
+            (matchday_data['HomeTeam'] == home_team) & 
+            (matchday_data['AwayTeam'] == away_team)
+        ].iloc[0]
         
-        # Get last 5 matches for each team
-        home_matches = df[
-            (df['HomeTeam'] == home_team) | (df['AwayTeam'] == home_team)
-        ].tail(5)
-        
-        away_matches = df[
-            (df['HomeTeam'] == away_team) | (df['AwayTeam'] == away_team)
-        ].tail(5)
-        
-        # Create form plots
-        fig1 = px.line(home_matches, x='Date', y='FTHG', title=f"{home_team} Recent Form")
-        fig2 = px.line(away_matches, x='Date', y='FTAG', title=f"{away_team} Recent Form")
-        
-        st.plotly_chart(fig1)
-        st.plotly_chart(fig2)
-        
-        # Make prediction
-        feat_eng = FeatureEngineer(df)
-        X, _ = feat_eng.get_feature_matrix()
-        latest_features = X.iloc[-1:]  # Get latest feature values
-        
-        probs = model.predict_proba(latest_features)[0]
-        
-        st.subheader("Match Prediction")
-        col1, col2, col3 = st.columns(3)
-        
+        # Display match details
+        st.subheader("Match Details")
+        col1, col2, col3 = st.columns([2, 1, 2])
         with col1:
-            st.metric("Home Win", f"{probs[2]:.1%}")
+            st.write(f"Home: {home_team}")
         with col2:
-            st.metric("Draw", f"{probs[1]:.1%}")
+            if pd.to_datetime(match['Date']) <= pd.Timestamp.now():
+                st.write(f"{match['FTHG']} - {match['FTAG']}")
+            else:
+                st.write("vs")
         with col3:
-            st.metric("Away Win", f"{probs[0]:.1%}")
+            st.write(f"Away: {away_team}")
         
-        # Display current league table
-        latest_date = df['Date'].max()
-        display_league_table(df, latest_date)
+        st.write(f"Date: {pd.to_datetime(match['Date']).strftime('%Y-%m-%d')}")
+        
+        # Display team form
+        st.subheader("Recent Form")
+        display_match_history(df, home_team, away_team, match['Date'])
+        
+        # Display league table before this match
+        st.subheader("League Table Before Match")
+        table = calculator.calculate_table(selected_season, pd.to_datetime(match['Date']))
+        st.dataframe(table)
+        
+        # If the match has betting odds, show them
+        if 'B365H' in match and 'B365D' in match and 'B365A' in match:
+            st.subheader("Betting Odds")
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("Home Win", f"{match['B365H']:.2f}")
+            with col2:
+                st.metric("Draw", f"{match['B365D']:.2f}")
+            with col3:
+                st.metric("Away Win", f"{match['B365A']:.2f}")
 
 if __name__ == "__main__":
     main() 
