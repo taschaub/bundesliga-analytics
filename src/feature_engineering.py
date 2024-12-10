@@ -6,161 +6,174 @@ class FeatureEngineer:
     def __init__(self, df: pd.DataFrame):
         """Initialize FeatureEngineer with DataFrame."""
         self.df = df.copy()
-        self.features = []
+        self.df['Date'] = pd.to_datetime(self.df['Date'])
         
-    def calculate_league_table(self, date: pd.Timestamp) -> pd.DataFrame:
-        """Calculate the league table up to a given date."""
-        # Get all matches before the given date
-        past_matches = self.df[self.df['Date'] < date].copy()
+    def calculate_team_stats(self, team: str, before_date: pd.Timestamp, n_matches: int = 5) -> Dict:
+        """Calculate recent statistics for a team."""
+        team_matches = self.df[
+            ((self.df['HomeTeam'] == team) | (self.df['AwayTeam'] == team)) &
+            (self.df['Date'] < before_date)
+        ].sort_values('Date', ascending=False).head(n_matches)
         
-        # Debugging: Print information about the data
-        print(f"\nCalculating table for date: {date}")
-        print(f"Number of past matches: {len(past_matches)}")
+        stats = {
+            'avg_goals_scored': 0,
+            'avg_goals_conceded': 0,
+            'form_points': 0,
+            'win_rate': 0,
+            'matches_played': len(team_matches)
+        }
         
-        # If no past matches, return empty DataFrame with required columns
-        if len(past_matches) == 0:
-            empty_table = pd.DataFrame(columns=[
-                'Points', 'GF', 'GA', 'GD', 'Matches', 'Wins', 
-                'Draws', 'Losses', 'PPG', 'Position'
-            ])
-            # Add all teams with default values
-            all_teams = pd.concat([self.df['HomeTeam'], self.df['AwayTeam']]).unique()
-            empty_table = pd.DataFrame(
-                {col: 0 for col in empty_table.columns},
-                index=all_teams
-            )
-            empty_table['Position'] = range(1, len(all_teams) + 1)
-            empty_table['PPG'] = 0
-            return empty_table
-        
-        # Initialize table dictionary
-        table = {}
-        
-        # Process each match
-        for _, match in past_matches.iterrows():
-            # Initialize teams if not in table
-            for team in [match['HomeTeam'], match['AwayTeam']]:
-                if team not in table:
-                    table[team] = {
-                        'Points': 0,
-                        'GF': 0,  # Goals For
-                        'GA': 0,  # Goals Against
-                        'GD': 0,  # Goal Difference
-                        'Matches': 0,
-                        'Wins': 0,
-                        'Draws': 0,
-                        'Losses': 0
-                    }
+        if stats['matches_played'] > 0:
+            goals_scored = []
+            goals_conceded = []
+            points = []
             
-            # Update home team stats
-            table[match['HomeTeam']]['GF'] += match['FTHG']
-            table[match['HomeTeam']]['GA'] += match['FTAG']
-            table[match['HomeTeam']]['Matches'] += 1
+            for _, match in team_matches.iterrows():
+                if match['HomeTeam'] == team:
+                    goals_scored.append(match['FTHG'])
+                    goals_conceded.append(match['FTAG'])
+                    if match['FTHG'] > match['FTAG']:
+                        points.append(3)
+                    elif match['FTHG'] == match['FTAG']:
+                        points.append(1)
+                    else:
+                        points.append(0)
+                else:
+                    goals_scored.append(match['FTAG'])
+                    goals_conceded.append(match['FTHG'])
+                    if match['FTAG'] > match['FTHG']:
+                        points.append(3)
+                    elif match['FTAG'] == match['FTHG']:
+                        points.append(1)
+                    else:
+                        points.append(0)
             
-            # Update away team stats
-            table[match['AwayTeam']]['GF'] += match['FTAG']
-            table[match['AwayTeam']]['GA'] += match['FTHG']
-            table[match['AwayTeam']]['Matches'] += 1
-            
-            # Update points and results
-            if match['FTHG'] > match['FTAG']:  # Home win
-                table[match['HomeTeam']]['Points'] += 3
-                table[match['HomeTeam']]['Wins'] += 1
-                table[match['AwayTeam']]['Losses'] += 1
-            elif match['FTHG'] < match['FTAG']:  # Away win
-                table[match['AwayTeam']]['Points'] += 3
-                table[match['AwayTeam']]['Wins'] += 1
-                table[match['HomeTeam']]['Losses'] += 1
-            else:  # Draw
-                table[match['HomeTeam']]['Points'] += 1
-                table[match['AwayTeam']]['Points'] += 1
-                table[match['HomeTeam']]['Draws'] += 1
-                table[match['AwayTeam']]['Draws'] += 1
-            
-            # Update goal differences
-            for team in table:
-                table[team]['GD'] = table[team]['GF'] - table[team]['GA']
+            stats['avg_goals_scored'] = np.mean(goals_scored)
+            stats['avg_goals_conceded'] = np.mean(goals_conceded)
+            stats['form_points'] = np.mean(points)
+            stats['win_rate'] = sum(p == 3 for p in points) / len(points)
         
-        # Convert to DataFrame and sort
-        table_df = pd.DataFrame.from_dict(table, orient='index')
-        
-        # Add any missing teams with zero values
-        all_teams = pd.concat([self.df['HomeTeam'], self.df['AwayTeam']]).unique()
-        missing_teams = set(all_teams) - set(table_df.index)
-        for team in missing_teams:
-            table_df.loc[team] = {
-                'Points': 0, 'GF': 0, 'GA': 0, 'GD': 0,
-                'Matches': 0, 'Wins': 0, 'Draws': 0, 'Losses': 0
-            }
-        
-        table_df['PPG'] = table_df['Points'] / table_df['Matches'].clip(lower=1)
-        table_df = table_df.sort_values(['Points', 'GD', 'GF'], ascending=[False, False, False])
-        table_df['Position'] = range(1, len(table_df) + 1)
-        
-        return table_df
+        return stats
     
-    def add_table_features(self) -> None:
-        """Add features based on league table position and form."""
-        for idx, match in self.df.iterrows():
-            # Calculate table just before this match
-            table = self.calculate_league_table(match['Date'])
-            
-            # Add position-based features
-            self.df.loc[idx, 'HomeTeamPosition'] = table.loc[match['HomeTeam'], 'Position']
-            self.df.loc[idx, 'AwayTeamPosition'] = table.loc[match['AwayTeam'], 'Position']
-            self.df.loc[idx, 'PositionDiff'] = table.loc[match['HomeTeam'], 'Position'] - table.loc[match['AwayTeam'], 'Position']
-            
-            # Add form-based features
-            self.df.loc[idx, 'HomeTeamPPG'] = table.loc[match['HomeTeam'], 'PPG']
-            self.df.loc[idx, 'AwayTeamPPG'] = table.loc[match['AwayTeam'], 'PPG']
-            
-            # Add goal-based features
-            home_matches = table.loc[match['HomeTeam'], 'Matches']
-            away_matches = table.loc[match['AwayTeam'], 'Matches']
-            
-            # Ensure at least 1 match for division
-            home_matches = max(1, home_matches)
-            away_matches = max(1, away_matches)
-            
-            self.df.loc[idx, 'HomeTeamGDPerGame'] = table.loc[match['HomeTeam'], 'GD'] / home_matches
-            self.df.loc[idx, 'AwayTeamGDPerGame'] = table.loc[match['AwayTeam'], 'GD'] / away_matches
+    def get_h2h_stats(self, home_team: str, away_team: str, before_date: pd.Timestamp, n_matches: int = 5) -> Dict:
+        """Calculate head-to-head statistics."""
+        h2h_matches = self.df[
+            (
+                ((self.df['HomeTeam'] == home_team) & (self.df['AwayTeam'] == away_team)) |
+                ((self.df['HomeTeam'] == away_team) & (self.df['AwayTeam'] == home_team))
+            ) &
+            (self.df['Date'] < before_date)
+        ].sort_values('Date', ascending=False).head(n_matches)
         
-        self.features.extend([
-            'HomeTeamPosition', 'AwayTeamPosition', 'PositionDiff',
-            'HomeTeamPPG', 'AwayTeamPPG',
-            'HomeTeamGDPerGame', 'AwayTeamGDPerGame'
-        ])
-
-    def calculate_team_form(self, n_matches: int = 5) -> None:
-        """Calculate rolling averages for goals scored and conceded."""
-        teams = pd.concat([self.df['HomeTeam'], self.df['AwayTeam']]).unique()
+        stats = {
+            'home_wins': 0,
+            'away_wins': 0,
+            'draws': 0,
+            'avg_goals': 0,
+            'matches_played': len(h2h_matches)
+        }
         
-        for team in teams:
-            # Home form
-            home_mask = self.df['HomeTeam'] == team
-            self.df.loc[home_mask, 'HomeTeamFormGF'] = (
-                self.df.loc[home_mask, 'FTHG'].rolling(n_matches, min_periods=1).mean()
-            )
-            self.df.loc[home_mask, 'HomeTeamFormGA'] = (
-                self.df.loc[home_mask, 'FTAG'].rolling(n_matches, min_periods=1).mean()
-            )
+        if stats['matches_played'] > 0:
+            total_goals = []
+            for _, match in h2h_matches.iterrows():
+                total_goals.append(match['FTHG'] + match['FTAG'])
+                if match['FTHG'] > match['FTAG']:
+                    if match['HomeTeam'] == home_team:
+                        stats['home_wins'] += 1
+                    else:
+                        stats['away_wins'] += 1
+                elif match['FTHG'] < match['FTAG']:
+                    if match['HomeTeam'] == home_team:
+                        stats['away_wins'] += 1
+                    else:
+                        stats['home_wins'] += 1
+                else:
+                    stats['draws'] += 1
             
-            # Away form
-            away_mask = self.df['AwayTeam'] == team
-            self.df.loc[away_mask, 'AwayTeamFormGF'] = (
-                self.df.loc[away_mask, 'FTAG'].rolling(n_matches, min_periods=1).mean()
-            )
-            self.df.loc[away_mask, 'AwayTeamFormGA'] = (
-                self.df.loc[away_mask, 'FTHG'].rolling(n_matches, min_periods=1).mean()
-            )
+            stats['avg_goals'] = np.mean(total_goals)
         
-        self.features.extend(['HomeTeamFormGF', 'HomeTeamFormGA', 
-                            'AwayTeamFormGF', 'AwayTeamFormGA'])
+        return stats
+    
+    def get_league_position(self, team: str, before_date: pd.Timestamp) -> int:
+        """Get team's league position before the match."""
+        season = self.df[self.df['Date'] == before_date]['Season'].iloc[0]
+        season_matches = self.df[
+            (self.df['Season'] == season) &
+            (self.df['Date'] < before_date)
+        ]
+        
+        # Calculate points for each team
+        team_points = {}
+        for _, match in season_matches.iterrows():
+            # Initialize teams if not in dict
+            for t in [match['HomeTeam'], match['AwayTeam']]:
+                if t not in team_points:
+                    team_points[t] = {'points': 0, 'gd': 0}
+            
+            # Update points
+            if match['FTHG'] > match['FTAG']:
+                team_points[match['HomeTeam']]['points'] += 3
+            elif match['FTHG'] < match['FTAG']:
+                team_points[match['AwayTeam']]['points'] += 3
+            else:
+                team_points[match['HomeTeam']]['points'] += 1
+                team_points[match['AwayTeam']]['points'] += 1
+            
+            # Update goal difference
+            team_points[match['HomeTeam']]['gd'] += match['FTHG'] - match['FTAG']
+            team_points[match['AwayTeam']]['gd'] += match['FTAG'] - match['FTHG']
+        
+        # Sort teams by points and goal difference
+        sorted_teams = sorted(
+            team_points.items(),
+            key=lambda x: (x[1]['points'], x[1]['gd']),
+            reverse=True
+        )
+        
+        # Find position of team
+        for i, (t, _) in enumerate(sorted_teams, 1):
+            if t == team:
+                return i
+        return 0
+    
+    def create_match_features(self, home_team: str, away_team: str, match_date: pd.Timestamp) -> pd.DataFrame:
+        """Create features for a specific match."""
+        # Get team stats
+        home_stats = self.calculate_team_stats(home_team, match_date)
+        away_stats = self.calculate_team_stats(away_team, match_date)
+        h2h_stats = self.get_h2h_stats(home_team, away_team, match_date)
+        
+        # Create feature dictionary
+        features = {
+            'home_avg_goals_scored': home_stats['avg_goals_scored'],
+            'home_avg_goals_conceded': home_stats['avg_goals_conceded'],
+            'home_form_points': home_stats['form_points'],
+            'home_win_rate': home_stats['win_rate'],
+            'away_avg_goals_scored': away_stats['avg_goals_scored'],
+            'away_avg_goals_conceded': away_stats['avg_goals_conceded'],
+            'away_form_points': away_stats['form_points'],
+            'away_win_rate': away_stats['win_rate'],
+            'h2h_home_win_rate': h2h_stats['home_wins'] / max(1, h2h_stats['matches_played']),
+            'h2h_avg_goals': h2h_stats['avg_goals'],
+            'home_position': self.get_league_position(home_team, match_date),
+            'away_position': self.get_league_position(away_team, match_date),
+            'position_diff': self.get_league_position(home_team, match_date) - 
+                           self.get_league_position(away_team, match_date)
+        }
+        
+        return pd.DataFrame([features])
     
     def get_feature_matrix(self) -> Tuple[pd.DataFrame, List[str]]:
-        """Return feature matrix and list of feature names."""
-        print("Calculating team form...")
-        self.calculate_team_form()
-        print("Adding table features...")
-        self.add_table_features()
-        return self.df[self.features], self.features
+        """Create feature matrix for all matches."""
+        features_list = []
+        
+        for _, match in self.df.iterrows():
+            features = self.create_match_features(
+                match['HomeTeam'],
+                match['AwayTeam'],
+                match['Date']
+            )
+            features_list.append(features)
+        
+        feature_matrix = pd.concat(features_list, ignore_index=True)
+        return feature_matrix, feature_matrix.columns.tolist()

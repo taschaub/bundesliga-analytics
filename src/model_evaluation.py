@@ -10,7 +10,15 @@ class ModelEvaluator:
         self.df = df
     
     def split_seasons(self, test_seasons: List[str]) -> Tuple[pd.DataFrame, pd.DataFrame]:
-        """Split data into train and test based on seasons."""
+        """
+        Split data into train and test based on seasons.
+        
+        Args:
+            test_seasons: List of seasons to use for testing (e.g., ['2022/2023'])
+            
+        Returns:
+            Tuple of (training_data, test_data)
+        """
         mask = self.df['Season'].isin(test_seasons)
         return self.df[~mask], self.df[mask]
     
@@ -22,24 +30,37 @@ class ModelEvaluator:
             'confusion_matrix': confusion_matrix(y_true, y_pred)
         }
         
-        # Calculate additional metrics
-        results['avg_prob_correct'] = np.mean([prob[true] for prob, true in zip(y_prob, y_true)])
+        # Add prediction confidence metrics
+        results['avg_confidence'] = np.mean(np.max(y_prob, axis=1))
+        results['correct_confidence'] = np.mean([
+            prob[true] for prob, true in zip(y_prob, y_true)
+        ])
         
         return results
     
-    def plot_confusion_matrix(self, cm: np.ndarray, title: str = 'Confusion Matrix'):
-        """Plot confusion matrix."""
-        plt.figure(figsize=(8, 6))
-        sns.heatmap(cm, annot=True, fmt='d', cmap='Blues')
-        plt.title(title)
-        plt.ylabel('True Label')
-        plt.xlabel('Predicted Label')
+    def plot_confusion_matrix(self, cm: np.ndarray):
+        """Plot confusion matrix with clear labels."""
+        plt.figure(figsize=(10, 8))
+        labels = ['Away Win', 'Draw', 'Home Win']
+        
+        sns.heatmap(
+            cm, 
+            annot=True, 
+            fmt='d', 
+            cmap='Blues',
+            xticklabels=labels,
+            yticklabels=labels
+        )
+        plt.title('Prediction Results')
+        plt.ylabel('Actual Result')
+        plt.xlabel('Predicted Result')
         return plt.gcf()
     
-    def plot_prediction_distribution(self, y_prob: np.ndarray, y_true: np.ndarray):
+    def plot_prediction_distribution(self, y_prob: np.ndarray):
         """Plot distribution of prediction probabilities."""
         plt.figure(figsize=(10, 6))
-        for i, outcome in enumerate(['Away Win', 'Draw', 'Home Win']):
+        labels = ['Away Win', 'Draw', 'Home Win']
+        for i, outcome in enumerate(labels):
             plt.hist(y_prob[:, i], alpha=0.5, label=outcome, bins=20)
         plt.title('Distribution of Prediction Probabilities')
         plt.xlabel('Probability')
