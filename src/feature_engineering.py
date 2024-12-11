@@ -177,3 +177,159 @@ class FeatureEngineer:
         
         feature_matrix = pd.concat(features_list, ignore_index=True)
         return feature_matrix, feature_matrix.columns.tolist()
+    
+    def calculate_team_form(self, team: str, before_date: pd.Timestamp, n_matches: int = 5) -> Dict:
+        """Calculate detailed form metrics for a team."""
+        team_matches = self.df[
+            ((self.df['HomeTeam'] == team) | (self.df['AwayTeam'] == team)) &
+            (self.df['Date'] < before_date)
+        ].sort_values('Date', ascending=False).head(n_matches)
+        
+        stats = {
+            'avg_goals_scored': 0,
+            'avg_goals_conceded': 0,
+            'form_points': 0,
+            'win_rate': 0,
+            'home_win_rate': 0,
+            'away_win_rate': 0,
+            'clean_sheets': 0,
+            'failed_to_score': 0,
+            'comeback_wins': 0,
+            'leads_lost': 0,
+            'avg_possession': 0,
+            'avg_shots': 0,
+            'shot_accuracy': 0,
+            'matches_played': len(team_matches)
+        }
+        
+        if stats['matches_played'] > 0:
+            home_games = 0
+            away_games = 0
+            
+            for _, match in team_matches.iterrows():
+                is_home = match['HomeTeam'] == team
+                
+                # Get goals and result
+                team_goals = match['FTHG'] if is_home else match['FTAG']
+                opp_goals = match['FTAG'] if is_home else match['FTHG']
+                
+                # Update basic stats
+                stats['avg_goals_scored'] += team_goals
+                stats['avg_goals_conceded'] += opp_goals
+                
+                # Clean sheets and scoring
+                if opp_goals == 0:
+                    stats['clean_sheets'] += 1
+                if team_goals == 0:
+                    stats['failed_to_score'] += 1
+                
+                # Win/loss stats
+                if is_home:
+                    home_games += 1
+                    if team_goals > opp_goals:
+                        stats['home_win_rate'] += 1
+                else:
+                    away_games += 1
+                    if team_goals > opp_goals:
+                        stats['away_win_rate'] += 1
+                
+                # Points
+                if team_goals > opp_goals:
+                    stats['form_points'] += 3
+                elif team_goals == opp_goals:
+                    stats['form_points'] += 1
+                
+                # Shots and possession if available
+                if 'HS' in match and 'AS' in match:
+                    shots = match['HS'] if is_home else match['AS']
+                    shots_target = match['HST'] if is_home else match['AST']
+                    stats['avg_shots'] += shots
+                    if shots > 0:
+                        stats['shot_accuracy'] += shots_target / shots
+                
+                if 'HF' in match and 'AF' in match:
+                    stats['avg_possession'] += match['HP'] if is_home else match['AP']
+            
+            # Calculate averages
+            stats['avg_goals_scored'] /= stats['matches_played']
+            stats['avg_goals_conceded'] /= stats['matches_played']
+            stats['form_points'] /= stats['matches_played']
+            stats['home_win_rate'] = stats['home_win_rate'] / max(1, home_games)
+            stats['away_win_rate'] = stats['away_win_rate'] / max(1, away_games)
+            stats['win_rate'] = (stats['home_win_rate'] * home_games + 
+                               stats['away_win_rate'] * away_games) / stats['matches_played']
+            stats['avg_shots'] /= stats['matches_played']
+            stats['shot_accuracy'] /= stats['matches_played']
+            stats['avg_possession'] /= stats['matches_played']
+        
+        return stats
+    
+    def get_streak_info(self, team: str, before_date: pd.Timestamp) -> Dict:
+        """Calculate current streaks."""
+        team_matches = self.df[
+            ((self.df['HomeTeam'] == team) | (self.df['AwayTeam'] == team)) &
+            (self.df['Date'] < before_date)
+        ].sort_values('Date', ascending=False)
+        
+        streaks = {
+            'unbeaten': 0,
+            'winning': 0,
+            'scoring': 0,
+            'clean_sheet': 0
+        }
+        
+        for _, match in team_matches.iterrows():
+            is_home = match['HomeTeam'] == team
+            team_goals = match['FTHG'] if is_home else match['FTAG']
+            opp_goals = match['FTAG'] if is_home else match['FTHG']
+            
+            # Check streaks
+            if team_goals > opp_goals:
+                if streaks['winning'] == streaks['unbeaten']:
+                    streaks['winning'] += 1
+                streaks['unbeaten'] += 1
+            elif team_goals == opp_goals:
+                streaks['winning'] = 0
+                streaks['unbeaten'] += 1
+            else:
+                break  # End of unbeaten streak
+            
+            if team_goals > 0:
+                streaks['scoring'] += 1
+            else:
+                break
+                
+            if opp_goals == 0:
+                streaks['clean_sheet'] += 1
+            else:
+                break
+        
+        return streaks
+
+    def create_sequence_features(self, team: str, before_date: pd.Timestamp, n_matches: int = 5) -> np.ndarray:
+        """Create sequence of match results for LSTM."""
+        team_matches = self.df[
+            ((self.df['HomeTeam'] == team) | (self.df['AwayTeam'] == team)) &
+            (self.df['Date'] < before_date)
+        ].sort_values('Date', ascending=False).head(n_matches)
+        
+        sequence = []
+        for _, match in team_matches.iterrows():
+            is_home = match['HomeTeam'] == team
+            team_goals = match['FTHG'] if is_home else match['FTAG']
+            opp_goals = match['FTAG'] if is_home else match['FTHG']
+            
+            features = [
+                1 if is_home else 0,  # Home/Away
+                team_goals,
+                opp_goals,
+                team_goals - opp_goals,  # Goal difference
+                3 if team_goals > opp_goals else (1 if team_goals == opp_goals else 0)  # Points
+            ]
+            sequence.append(features)
+        
+        # Pad sequence if needed
+        while len(sequence) < n_matches:
+            sequence.append([0] * 5)
+        
+        return np.array(sequence)
