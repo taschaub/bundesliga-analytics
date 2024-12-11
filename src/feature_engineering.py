@@ -172,6 +172,184 @@ class FeatureEngineer:
                     self.df.at[idx, f'{prefix}RecentGoalsScored'] = 0
                     self.df.at[idx, f'{prefix}RecentGoalsConceded'] = 0
     
+    def _add_advanced_features(self):
+        """Add advanced features including expected goals, rest days, and momentum."""
+        print("Adding advanced features...")
+        
+        for idx, match in self.df.sort_values('Date').iterrows():
+            match_date = match['Date']
+            home_team = match['HomeTeam']
+            away_team = match['AwayTeam']
+            
+            # Get historical matches before this match
+            historical = self.df[self.df['Date'] < match_date]
+            
+            if not historical.empty:
+                # Expected Goals (xG) based on historical scoring rates
+                home_historical = historical[historical['HomeTeam'] == home_team]
+                away_historical = historical[historical['AwayTeam'] == away_team]
+                
+                if not home_historical.empty:
+                    home_scoring_rate = home_historical['FTHG'].mean()
+                    home_conceding_rate = home_historical['FTAG'].mean()
+                else:
+                    home_scoring_rate = self.df['FTHG'].mean()
+                    home_conceding_rate = self.df['FTAG'].mean()
+                
+                if not away_historical.empty:
+                    away_scoring_rate = away_historical['FTAG'].mean()
+                    away_conceding_rate = away_historical['FTHG'].mean()
+                else:
+                    away_scoring_rate = self.df['FTAG'].mean()
+                    away_conceding_rate = self.df['FTHG'].mean()
+                
+                self.df.at[idx, 'ExpectedHomeGoals'] = (home_scoring_rate + away_conceding_rate) / 2
+                self.df.at[idx, 'ExpectedAwayGoals'] = (away_scoring_rate + home_conceding_rate) / 2
+                
+                # Rest Days
+                for team, prefix in [(home_team, 'Home'), (away_team, 'Away')]:
+                    last_match = historical[
+                        (historical['HomeTeam'] == team) | 
+                        (historical['AwayTeam'] == team)
+                    ].sort_values('Date').tail(1)
+                    
+                    if not last_match.empty:
+                        rest_days = (match_date - last_match['Date'].iloc[0]).days
+                        self.df.at[idx, f'{prefix}RestDays'] = rest_days
+                    else:
+                        self.df.at[idx, f'{prefix}RestDays'] = 7  # Default to a week if no previous match
+                
+                # Momentum Features
+                for team, prefix in [(home_team, 'Home'), (away_team, 'Away')]:
+                    recent = historical[
+                        (historical['HomeTeam'] == team) | 
+                        (historical['AwayTeam'] == team)
+                    ].sort_values('Date').tail(5)
+                    
+                    if not recent.empty:
+                        # Winning/Losing Streak
+                        streak = 0
+                        for _, game in recent.iterrows():
+                            if ((game['HomeTeam'] == team and game['FTR'] == 'H') or 
+                                (game['AwayTeam'] == team and game['FTR'] == 'A')):
+                                streak += 1
+                            else:
+                                break
+                        self.df.at[idx, f'{prefix}WinningStreak'] = streak
+                        
+                        # Recent Goals Trend
+                        recent_goals_scored = []
+                        recent_goals_conceded = []
+                        for _, game in recent.iterrows():
+                            if game['HomeTeam'] == team:
+                                recent_goals_scored.append(game['FTHG'])
+                                recent_goals_conceded.append(game['FTAG'])
+                            else:
+                                recent_goals_scored.append(game['FTAG'])
+                                recent_goals_conceded.append(game['FTHG'])
+                        
+                        # Calculate trend (positive slope means improving)
+                        if len(recent_goals_scored) >= 3:
+                            scored_trend = np.polyfit(range(len(recent_goals_scored)), recent_goals_scored, 1)[0]
+                            conceded_trend = np.polyfit(range(len(recent_goals_conceded)), recent_goals_conceded, 1)[0]
+                            self.df.at[idx, f'{prefix}ScoringTrend'] = scored_trend
+                            self.df.at[idx, f'{prefix}ConcedingTrend'] = conceded_trend
+                        else:
+                            self.df.at[idx, f'{prefix}ScoringTrend'] = 0
+                            self.df.at[idx, f'{prefix}ConcedingTrend'] = 0
+                    else:
+                        self.df.at[idx, f'{prefix}WinningStreak'] = 0
+                        self.df.at[idx, f'{prefix}ScoringTrend'] = 0
+                        self.df.at[idx, f'{prefix}ConcedingTrend'] = 0
+
+    def _add_league_position_features(self):
+        """Add features based on league positions and points."""
+        print("Adding league position features...")
+        
+        for season in self.df['Season'].unique():
+            season_matches = self.df[self.df['Season'] == season].sort_values('Date')
+            
+            # Initialize points and stats dictionaries for the season
+            points = {}
+            matches_played = {}
+            goals_scored = {}
+            goals_conceded = {}
+            
+            for idx, match in season_matches.iterrows():
+                home_team = match['HomeTeam']
+                away_team = match['AwayTeam']
+                
+                # Initialize teams if not seen before
+                for team in [home_team, away_team]:
+                    if team not in points:
+                        points[team] = 0
+                        matches_played[team] = 0
+                        goals_scored[team] = 0
+                        goals_conceded[team] = 0
+                
+                # Calculate current points per game and goal differences
+                for team in points:
+                    if matches_played[team] > 0:
+                        ppg = points[team] / matches_played[team]
+                        gd = goals_scored[team] - goals_conceded[team]
+                        gpg = goals_scored[team] / matches_played[team]
+                        gcpg = goals_conceded[team] / matches_played[team]
+                    else:
+                        ppg = 0
+                        gd = 0
+                        gpg = 0
+                        gcpg = 0
+                    
+                    if team == home_team:
+                        self.df.at[idx, 'HomePPG'] = ppg
+                        self.df.at[idx, 'HomeGD'] = gd
+                        self.df.at[idx, 'HomeGPG'] = gpg
+                        self.df.at[idx, 'HomeGCPG'] = gcpg
+                    elif team == away_team:
+                        self.df.at[idx, 'AwayPPG'] = ppg
+                        self.df.at[idx, 'AwayGD'] = gd
+                        self.df.at[idx, 'AwayGPG'] = gpg
+                        self.df.at[idx, 'AwayGCPG'] = gcpg
+                
+                # Calculate and store current positions
+                sorted_teams = sorted(
+                    points.items(),
+                    key=lambda x: (
+                        -x[1],  # Points (descending)
+                        -(goals_scored[x[0]] - goals_conceded[x[0]]),  # Goal difference (descending)
+                        -goals_scored[x[0]]  # Goals scored (descending)
+                    )
+                )
+                positions = {team: pos+1 for pos, (team, _) in enumerate(sorted_teams)}
+                
+                self.df.at[idx, 'HomePosition'] = positions.get(home_team, len(positions))
+                self.df.at[idx, 'AwayPosition'] = positions.get(away_team, len(positions))
+                self.df.at[idx, 'PositionDiff'] = positions.get(away_team, len(positions)) - positions.get(home_team, len(positions))
+                
+                # Calculate relative strength based on league position
+                max_position = len(positions)
+                home_rel_strength = 1 - ((positions.get(home_team, max_position) - 1) / (max_position - 1)) if max_position > 1 else 0.5
+                away_rel_strength = 1 - ((positions.get(away_team, max_position) - 1) / (max_position - 1)) if max_position > 1 else 0.5
+                self.df.at[idx, 'HomeRelativeStrength'] = home_rel_strength
+                self.df.at[idx, 'AwayRelativeStrength'] = away_rel_strength
+                
+                # Update points and stats after match
+                if match['FTR'] == 'H':
+                    points[home_team] += 3
+                elif match['FTR'] == 'A':
+                    points[away_team] += 3
+                else:
+                    points[home_team] += 1
+                    points[away_team] += 1
+                
+                # Update matches played and goals
+                matches_played[home_team] += 1
+                matches_played[away_team] += 1
+                goals_scored[home_team] += match['FTHG']
+                goals_scored[away_team] += match['FTAG']
+                goals_conceded[home_team] += match['FTAG']
+                goals_conceded[away_team] += match['FTHG']
+
     def engineer_features(self) -> pd.DataFrame:
         """Main method to engineer all features."""
         print("Calculating team ratings...")
@@ -186,6 +364,12 @@ class FeatureEngineer:
         print("Adding sequence features...")
         self._add_sequence_features()
         
+        print("Adding advanced features...")
+        self._add_advanced_features()
+        
+        print("Adding league position features...")
+        self._add_league_position_features()
+        
         # Fill NaN values using forward fill
         self.df = self.df.ffill()
         
@@ -193,8 +377,10 @@ class FeatureEngineer:
         self.df['Target'] = np.where(self.df['FTHG'] > self.df['FTAG'], 2,
                                    np.where(self.df['FTHG'] == self.df['FTAG'], 1, 0))
         
-        # Ensure all features are numeric
+        # Ensure all numeric features are float
         numeric_columns = self.df.select_dtypes(include=[np.number]).columns
-        self.df = self.df[numeric_columns]
+        for col in numeric_columns:
+            if col not in ['Target', 'Season', 'Month', 'MatchesInSeason']:
+                self.df[col] = self.df[col].astype(float)
         
         return self.df

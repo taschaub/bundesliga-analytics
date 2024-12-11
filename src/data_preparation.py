@@ -1,44 +1,27 @@
 import pandas as pd
-import numpy as np
-from typing import Tuple
+from typing import List
 
 class DataPreparator:
     def __init__(self, data_path: str):
-        """Initialize the DataPreparator with path to data file."""
+        """Initialize with path to data file."""
         self.data_path = data_path
-        self.df = None
-        
-    def load_data(self) -> pd.DataFrame:
-        """Load the Bundesliga match data from CSV."""
-        self.df = pd.read_csv(self.data_path)
-        self.df['Date'] = pd.to_datetime(self.df['Date'])
-        return self.df
-    
-    def standardize_team_names(self) -> None:
-        """Standardize team names to ensure consistency."""
-        team_name_mapping = {
-            'M\'gladbach': 'Borussia M.gladbach',
-            'Bayern Munich': 'Bayern München',
-            'Dusseldorf': 'Fortuna Düsseldorf',
-            'Fortuna Dusseldorf': 'Fortuna Düsseldorf',
-            'FC Koln': '1. FC Köln',
-            'Koln': '1. FC Köln',
-            'Ein Frankfurt': 'Eintracht Frankfurt',
-            'Hertha': 'Hertha Berlin',
-            'Greuther Furth': 'Greuther Fürth',
-            'Nurnberg': 'Nürnberg'
-        }
-        self.df['HomeTeam'] = self.df['HomeTeam'].replace(team_name_mapping)
-        self.df['AwayTeam'] = self.df['AwayTeam'].replace(team_name_mapping)
-    
-    def create_target_variable(self) -> None:
-        """Create target variable (2: home win, 1: draw, 0: away win)."""
-        self.df['Target'] = np.where(self.df['FTHG'] > self.df['FTAG'], 2,
-                                   np.where(self.df['FTHG'] == self.df['FTAG'], 1, 0))
     
     def prepare_data(self) -> pd.DataFrame:
-        """Main method to prepare the data."""
-        self.load_data()
-        self.standardize_team_names()
-        self.create_target_variable()
-        return self.df 
+        """Load and prepare data for analysis."""
+        # Load data
+        df = pd.read_csv(self.data_path)
+        
+        # Convert date to datetime
+        df['Date'] = pd.to_datetime(df['Date'])
+        
+        # Sort by date
+        df = df.sort_values('Date')
+        
+        # Add season progress features
+        df['Season'] = df['Date'].dt.year
+        df['Month'] = df['Date'].dt.month
+        
+        # Calculate matches played in season
+        df['MatchesInSeason'] = df.groupby('Season').cumcount() + 1
+        
+        return df
