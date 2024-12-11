@@ -4,12 +4,15 @@ import os
 from typing import List
 from datetime import datetime
 
-def download_bundesliga_data(seasons: List[str], output_path: str = 'data/bundesliga_matches.csv'):
+def download_bundesliga_data(seasons: List[str]):
     """
     Download and combine Bundesliga data from multiple seasons.
     Each season should have exactly 34 matchdays (9 matches each).
     """
-    os.makedirs('data', exist_ok=True)
+    # Create directories if they don't exist
+    os.makedirs('data/raw', exist_ok=True)
+    os.makedirs('data/processed', exist_ok=True)
+    
     base_url = "https://www.football-data.co.uk/mmz4281"
     dfs = []
     
@@ -22,7 +25,7 @@ def download_bundesliga_data(seasons: List[str], output_path: str = 'data/bundes
             response.raise_for_status()
             
             # Save raw file
-            raw_file_path = f"data/D1_{season}.csv"
+            raw_file_path = f"data/raw/D1_{season}.csv"
             with open(raw_file_path, "wb") as f:
                 f.write(response.content)
             print(f"Successfully downloaded season {season}")
@@ -56,23 +59,6 @@ def download_bundesliga_data(seasons: List[str], output_path: str = 'data/bundes
             if n_matches != 306:  # 34 matchdays * 9 matches
                 print(f"Warning: Found {n_matches} matches in season {season} (expected 306)")
             
-            # Select relevant columns
-            relevant_columns = [
-                'Date', 'HomeTeam', 'AwayTeam', 'FTHG', 'FTAG',
-                'B365H', 'B365D', 'B365A',  # Betting odds
-                'HS', 'AS',  # Shots
-                'HST', 'AST',  # Shots on target
-                'HC', 'AC',  # Corners
-                'HF', 'AF',  # Fouls
-                'HY', 'AY',  # Yellow cards
-                'HR', 'AR',  # Red cards
-                'Season', 'Matchday'
-            ]
-            
-            # Only keep columns that exist in the dataset
-            existing_columns = [col for col in relevant_columns if col in df.columns]
-            df = df[existing_columns]
-            
             dfs.append(df)
             
         except Exception as e:
@@ -82,33 +68,35 @@ def download_bundesliga_data(seasons: List[str], output_path: str = 'data/bundes
         combined_df = pd.concat(dfs, ignore_index=True)
         combined_df = combined_df.sort_values(['Season', 'Date'])
         
-        # Verify final dataset
-        print("\nData verification:")
+        # Save full version
+        full_path = 'data/processed/bundesliga_matches_full.csv'
+        combined_df.to_csv(full_path, index=False)
+        
+        # Save minimal version
+        minimal_columns = ['Date', 'Season', 'Matchday', 'HomeTeam', 'AwayTeam', 'FTHG', 'FTAG']
+        minimal_path = 'data/processed/bundesliga_matches.csv'
+        combined_df[minimal_columns].to_csv(minimal_path, index=False)
+        
+        print("\nData saved:")
+        print(f"Full dataset: {full_path}")
+        print(f"Minimal dataset: {minimal_path}")
+        
+        # Print verification info
+        print("\nDataset verification:")
         for season in combined_df['Season'].unique():
             season_data = combined_df[combined_df['Season'] == season]
             print(f"\nSeason {season}:")
             print(f"Total matches: {len(season_data)}")
             print(f"Number of matchdays: {season_data['Matchday'].max()}")
             print(f"Date range: {season_data['Date'].min()} to {season_data['Date'].max()}")
-            
-            # Check matches per matchday
-            matches_per_day = season_data.groupby('Matchday').size()
-            if not all(count == 9 for count in matches_per_day):
-                print("Warning: Irregular number of matches in matchdays:")
-                print(matches_per_day[matches_per_day != 9])
-        
-        # Save both full and minimal versions
-        combined_df.to_csv(output_path.replace('.csv', '_full.csv'), index=False)
-        
-        minimal_columns = ['Date', 'Season', 'Matchday', 'HomeTeam', 'AwayTeam', 'FTHG', 'FTAG']
-        combined_df[minimal_columns].to_csv(output_path, index=False)
-        
-        print(f"\nData saved to {output_path}")
-        print(f"Full data saved to {output_path.replace('.csv', '_full.csv')}")
-        
+    
     else:
         print("No data was downloaded!")
 
 if __name__ == "__main__":
-    seasons = ['1819', '1920', '2021', '2122', '2223']
+    # Download more seasons (10 years of data)
+    seasons = [
+        '1314', '1415', '1516', '1617', '1718',  # 2013-2018
+        '1819', '1920', '2021', '2122', '2223'   # 2018-2023
+    ]
     download_bundesliga_data(seasons)

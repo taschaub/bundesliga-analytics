@@ -1,21 +1,19 @@
 import pandas as pd
+import numpy as np
 import joblib
 import os
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.linear_model import LogisticRegression
+from sklearn.model_selection import GridSearchCV
+from sklearn.preprocessing import StandardScaler
 from src.data_preparation import DataPreparator
 from src.feature_engineering import FeatureEngineer
 from src.model_evaluation import ModelEvaluator
+import matplotlib.pyplot as plt
 
 def train_model(model_type: str = 'random_forest'):
-    """
-    Train and evaluate the prediction model.
-    
-    Args:
-        model_type: Either 'random_forest' or 'logistic'
-    """
+    """Train and evaluate the prediction model."""
     # Load and prepare data
-    data_prep = DataPreparator('data/bundesliga_matches_full.csv')
+    data_prep = DataPreparator('data/processed/bundesliga_matches_full.csv')
     df = data_prep.prepare_data()
     
     # Create evaluator
@@ -37,27 +35,40 @@ def train_model(model_type: str = 'random_forest'):
     X_test, _ = feat_eng_test.get_feature_matrix()
     y_test = test_df['Target']
     
-    # Initialize model
-    if model_type == 'logistic':
-        model = LogisticRegression(
-            multi_class='multinomial',
-            max_iter=1000,
-            random_state=42
-        )
-    else:
-        model = RandomForestClassifier(
-            n_estimators=100,
-            max_depth=10,
-            random_state=42
-        )
+    # Scale features
+    scaler = StandardScaler()
+    X_train_scaled = scaler.fit_transform(X_train)
+    X_test_scaled = scaler.transform(X_test)
     
-    # Train model
-    print("\nTraining model...")
-    model.fit(X_train, y_train)
+    # Define parameter grid for RandomForest
+    param_grid = {
+        'n_estimators': [100, 200, 300],
+        'max_depth': [10, 15, 20, None],
+        'min_samples_split': [2, 5, 10],
+        'min_samples_leaf': [1, 2, 4],
+        'class_weight': ['balanced', None]
+    }
+    
+    # Initialize and train model with grid search
+    base_model = RandomForestClassifier(random_state=42)
+    grid_search = GridSearchCV(
+        base_model,
+        param_grid,
+        cv=5,
+        scoring='accuracy',
+        n_jobs=-1,
+        verbose=2
+    )
+    
+    print("\nPerforming grid search...")
+    grid_search.fit(X_train_scaled, y_train)
+    
+    print("\nBest parameters:", grid_search.best_params_)
+    model = grid_search.best_estimator_
     
     # Make predictions
-    y_pred = model.predict(X_test)
-    y_prob = model.predict_proba(X_test)
+    y_pred = model.predict(X_test_scaled)
+    y_prob = model.predict_proba(X_test_scaled)
     
     # Evaluate
     results = evaluator.evaluate_model(y_test, y_pred, y_prob)
@@ -70,23 +81,32 @@ def train_model(model_type: str = 'random_forest'):
     print("\nClassification Report:")
     print(results['classification_report'])
     
-    # Save model and metadata
+    # Save everything needed for predictions
     os.makedirs('models', exist_ok=True)
     joblib.dump(model, 'models/model.pkl')
     joblib.dump(feature_names, 'models/feature_names.pkl')
+    joblib.dump(scaler, 'models/scaler.pkl')
     
     # Save evaluation plots
     evaluator.plot_confusion_matrix(results['confusion_matrix']).savefig('models/confusion_matrix.png')
     evaluator.plot_prediction_distribution(y_prob).savefig('models/prediction_distribution.png')
     
-    # If using random forest, save feature importances
-    if model_type == 'random_forest':
-        importances = pd.DataFrame({
-            'feature': feature_names,
-            'importance': model.feature_importances_
-        }).sort_values('importance', ascending=False)
-        print("\nTop 10 Most Important Features:")
-        print(importances.head(10))
+    # Analyze feature importance
+    importances = pd.DataFrame({
+        'feature': feature_names,
+        'importance': model.feature_importances_
+    }).sort_values('importance', ascending=False)
+    
+    print("\nTop 10 Most Important Features:")
+    print(importances.head(10))
+    
+    # Save feature importances plot
+    plt.figure(figsize=(12, 6))
+    plt.bar(importances['feature'][:10], importances['importance'][:10])
+    plt.xticks(rotation=45, ha='right')
+    plt.title('Top 10 Feature Importances')
+    plt.tight_layout()
+    plt.savefig('models/feature_importances.png')
 
 if __name__ == "__main__":
-    train_model('random_forest')  # or 'logistic'
+    train_model('random_forest')

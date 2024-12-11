@@ -8,14 +8,15 @@ from src.feature_engineering import FeatureEngineer
 # Load data and model
 @st.cache_data
 def load_data():
-    df = pd.read_csv('data/bundesliga_matches_full.csv')
+    df = pd.read_csv('data/processed/bundesliga_matches_full.csv')
     df['Date'] = pd.to_datetime(df['Date'])
     return df
 
 @st.cache_resource
 def load_model():
     model = joblib.load('models/model.pkl')
-    return model
+    scaler = joblib.load('models/scaler.pkl')
+    return model, scaler
 
 def display_match_history(df: pd.DataFrame, home_team: str, away_team: str, before_date: pd.Timestamp):
     """Display recent matches for both teams before a specific date."""
@@ -98,7 +99,7 @@ def main():
     
     # Load data and model
     df = load_data()
-    model = load_model()
+    model, scaler = load_model()
     calculator = TableCalculator(df)
     
     # Season selection
@@ -154,7 +155,8 @@ def main():
         # Make prediction
         feat_eng = FeatureEngineer(df)
         match_features = feat_eng.create_match_features(home_team, away_team, match_date)
-        probs = model.predict_proba(match_features)[0]
+        match_features_scaled = scaler.transform(match_features)
+        probs = model.predict_proba(match_features_scaled)[0]
         
         st.subheader("Match Prediction")
         if match_date <= pd.Timestamp.now():
