@@ -32,9 +32,9 @@ class DataPreparator:
         self.df['AwayTeam'] = self.df['AwayTeam'].replace(team_name_mapping)
     
     def create_target_variable(self) -> None:
-        """Create target variable (1: home win, 0: draw, -1: away win)."""
-        self.df['Target'] = np.where(self.df['FTHG'] > self.df['FTAG'], 1,
-                                   np.where(self.df['FTHG'] == self.df['FTAG'], 0, -1))
+        """Create target variable (2: home win, 1: draw, 0: away win)."""
+        self.df['Target'] = np.where(self.df['FTHG'] > self.df['FTAG'], 2,
+                                   np.where(self.df['FTHG'] == self.df['FTAG'], 1, 0))
     
     def prepare_data(self) -> pd.DataFrame:
         """Main method to prepare the data."""
