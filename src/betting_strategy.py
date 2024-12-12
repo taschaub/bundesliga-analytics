@@ -18,32 +18,60 @@ class BetResult:
 
 class BettingStrategy:
     def __init__(self, bankroll: float = 1000, kelly_fraction: float = 0.02):
-        """
-        Initialize betting strategy.
-        
-        Args:
-            bankroll: Initial bankroll
-            kelly_fraction: Fraction of Kelly criterion to use (conservative approach)
-        """
+        """Initialize betting strategy with moderate parameters."""
         self.initial_bankroll = bankroll
         self.bankroll = bankroll
-        self.kelly_fraction = kelly_fraction
+        self.kelly_fraction = kelly_fraction  # Use 2% of Kelly
         self.bets: List[BetResult] = []
         self.min_edge = 0.05  # Minimum 5% edge to place a bet
         self.min_prob = 0.2   # Minimum 20% probability to consider a bet
+        self.max_bet_size = 0.05  # Maximum 5% of bankroll per bet
+        self.max_odds = 5.0  # Don't bet on odds higher than this
+        self.min_odds = 1.2  # Don't bet on odds lower than this
         
+        # Track consecutive losses
+        self.consecutive_losses = 0
+        self.max_consecutive_losses = 5  # Stop betting after 5 consecutive losses
+        
+        # Daily betting limits
+        self.daily_bet_count = {}
+        self.max_daily_bets = 5
+        
+        # Track profit/loss streaks
+        self.current_streak = 0
+        self.stop_loss_threshold = -0.25  # Stop betting if we lose 25% of bankroll
+    
     def calculate_edge(self, our_prob: float, odds: float) -> float:
-        """Calculate betting edge based on our probability vs. market odds."""
-        market_prob = 1 / odds
+        """Calculate betting edge with bookmaker margin consideration."""
+        # Typical bookmaker margin is 5%
+        margin = 0.05
+        market_prob = (1 / odds) * (1 - margin)
         edge = our_prob - market_prob
         return edge
     
     def kelly_criterion(self, prob: float, odds: float) -> float:
-        """Calculate Kelly criterion bet size."""
+        """Calculate Kelly criterion bet size with conservative adjustments."""
         q = 1 - prob
         b = odds - 1
         f = (prob * b - q) / b
-        return max(0, f * self.kelly_fraction)  # Conservative Kelly
+        
+        # Apply very conservative Kelly
+        kelly_bet = max(0, f * self.kelly_fraction)
+        
+        # Additional safety: cap at max_bet_size
+        return min(kelly_bet, self.max_bet_size)
+    
+    def should_stop_betting(self) -> bool:
+        """Determine if we should stop betting based on various criteria."""
+        # Stop if we've lost too much
+        if self.bankroll < self.initial_bankroll * (1 + self.stop_loss_threshold):
+            return True
+        
+        # Stop if we've had too many consecutive losses
+        if self.consecutive_losses >= self.max_consecutive_losses:
+            return True
+        
+        return False
     
     def analyze_betting_opportunity(
         self,
@@ -53,16 +81,24 @@ class BettingStrategy:
         predicted_probs: Dict[str, float],
         odds: Dict[str, float]
     ) -> List[Tuple[str, float, float]]:
-        """
-        Analyze betting opportunity and return list of recommended bets.
-        Returns: List of (bet_type, bet_amount, edge)
-        """
+        """Analyze betting opportunity with strict criteria."""
+        if self.should_stop_betting():
+            return []
+        
+        # Check daily bet limit
+        date_str = match_date.date().isoformat()
+        if self.daily_bet_count.get(date_str, 0) >= self.max_daily_bets:
+            return []
+        
         opportunities = []
         
-        # Check each possible outcome
         for outcome in ['H', 'D', 'A']:
             prob = predicted_probs[outcome]
             odd = odds[outcome]
+            
+            # Skip if odds are outside our acceptable range
+            if odd < self.min_odds or odd > self.max_odds:
+                continue
             
             # Calculate edge
             edge = self.calculate_edge(prob, odd)
@@ -73,8 +109,13 @@ class BettingStrategy:
                 bet_size = self.kelly_criterion(prob, odd)
                 bet_amount = self.bankroll * bet_size
                 
-                if bet_amount > 0:
+                # Minimum bet size of $10
+                if bet_amount >= 10:
                     opportunities.append((outcome, bet_amount, edge))
+        
+        # Update daily bet count
+        if opportunities:
+            self.daily_bet_count[date_str] = self.daily_bet_count.get(date_str, 0) + 1
         
         return opportunities
     
@@ -90,12 +131,16 @@ class BettingStrategy:
         bet_amount: float,
         edge: float
     ) -> None:
-        """Place a bet and record the result."""
+        """Place a bet and record the result with updated tracking."""
         # Calculate profit/loss
         if bet_type == actual_result:
             profit = bet_amount * (odds[bet_type] - 1)
+            self.consecutive_losses = 0
+            self.current_streak = max(0, self.current_streak + 1)
         else:
             profit = -bet_amount
+            self.consecutive_losses += 1
+            self.current_streak = min(0, self.current_streak - 1)
         
         # Update bankroll
         self.bankroll += profit
