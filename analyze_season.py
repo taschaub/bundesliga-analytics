@@ -9,71 +9,25 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from typing import Dict, List, Tuple
 from datetime import datetime
+import joblib
 
-def analyze_season(season: int = 2022):
+def analyze_season(season: int = 2023):
     """Analyze betting decisions for a specific season."""
     # Load and prepare data
     print("Loading data...")
     data_prep = DataPreparator("data/processed/bundesliga_matches_full.csv")
     df = data_prep.prepare_data()
     
-    # Split data into training (up to previous season) and test (current season)
-    train_df = df[df['Season'] < season].copy()
-    test_df = df[df['Season'] == season].copy()
+    # Load pre-trained model and scaler
+    print("Loading model...")
+    model = joblib.load('models/model.joblib')
+    scaler = joblib.load('models/scaler.joblib')
     
-    # Engineer features for training data
-    print("Engineering features for training data...")
-    feature_eng_train = FeatureEngineer(train_df)
-    df_features_train = feature_eng_train.engineer_features()
+    # Get matches for betting season
+    betting_season = df[df['Season'] == season].copy()
     
-    # Engineer features for test data
-    print("Engineering features for test data...")
-    # Include test data in feature engineering to maintain continuity
-    full_df = pd.concat([train_df, test_df]).sort_values('Date')
-    feature_eng_full = FeatureEngineer(full_df)
-    df_features_full = feature_eng_full.engineer_features()
-    
-    # Split back into train and test
-    df_features_train = df_features_full[df_features_full['Season'] < season]
-    df_features_test = df_features_full[df_features_full['Season'] == season]
-    
-    # Separate features for training vs. metadata
-    metadata_columns = ['Date', 'HomeTeam', 'AwayTeam', 'FTHG', 'FTAG', 'FTR', 'Target',
-                       'Season', 'Month', 'MatchesInSeason', 'B365H', 'B365D', 'B365A']
-    
-    # Get numeric features only
-    numeric_features = df_features_train.select_dtypes(include=[np.number]).columns
-    feature_columns = [col for col in numeric_features if col not in metadata_columns]
-    
-    X_train = df_features_train[feature_columns]
-    y_train = df_features_train['Target']
-    X_test = df_features_test[feature_columns]
-    y_test = df_features_test['Target']
-    
-    # Scale features
-    scaler = StandardScaler()
-    X_train_scaled = scaler.fit_transform(X_train)
-    X_test_scaled = scaler.transform(X_test)
-    
-    # Train model
-    print("Training model...")
-    params = {
-        'objective': 'multi:softprob',
-        'num_class': 3,
-        'learning_rate': 0.01,
-        'max_depth': 4,
-        'min_child_weight': 5,
-        'gamma': 0.3,
-        'subsample': 0.7,
-        'colsample_bytree': 0.7,
-        'reg_alpha': 1.5,
-        'reg_lambda': 1.5,
-        'tree_method': 'hist',
-        'random_state': 42
-    }
-    
-    dtrain = xgb.DMatrix(X_train_scaled, label=y_train)
-    model = xgb.train(params, dtrain, num_boost_round=1000)
+    # Sort matches by date
+    betting_season = betting_season.sort_values('Date')
     
     # Initialize betting strategy
     strategy = BettingStrategy(bankroll=1000)
@@ -81,62 +35,95 @@ def analyze_season(season: int = 2022):
     # Store betting decisions and results
     betting_history = []
     
-    # Analyze each match in the test season
-    print("\nAnalyzing betting opportunities...")
-    for idx, row in test_df.iterrows():
-        match_date = pd.to_datetime(row['Date'])
-        home_team = row['HomeTeam']
-        away_team = row['AwayTeam']
-        actual_result = row['FTR']  # Full Time Result
+    # For each match day
+    for match_date in betting_season['Date'].unique():
+        print(f"\nAnalyzing matches for {match_date.date()}")
         
-        # Get model predictions
-        test_idx = df_features_test.index.get_loc(idx)
-        X_match = xgb.DMatrix(X_test_scaled[test_idx:test_idx+1])
-        probs = model.predict(X_match)[0]
-        predicted_probs = {'H': probs[2], 'D': probs[1], 'A': probs[0]}
+        # Get matches for this day
+        day_matches = betting_season[betting_season['Date'] == match_date]
         
-        # Get odds
-        odds = {
-            'H': row['B365H'],
-            'D': row['B365D'],
-            'A': row['B365A']
-        }
+        # Use only data available before this date for feature engineering
+        available_data = df[df['Date'] < match_date]
         
-        # Analyze betting opportunities
-        opportunities = strategy.analyze_betting_opportunity(
-            match_date, home_team, away_team, predicted_probs, odds
-        )
+        # Engineer features
+        feature_eng = FeatureEngineer(available_data)
+        features = feature_eng.engineer_features()
         
-        # Record match information
-        match_info = {
-            'Date': match_date,
-            'HomeTeam': home_team,
-            'AwayTeam': away_team,
-            'ActualResult': actual_result,
-            'HomeOdds': odds['H'],
-            'DrawOdds': odds['D'],
-            'AwayOdds': odds['A'],
-            'HomePred': predicted_probs['H'],
-            'DrawPred': predicted_probs['D'],
-            'AwayPred': predicted_probs['A'],
-            'BetPlaced': len(opportunities) > 0,
-            'BankrollBefore': strategy.bankroll
-        }
+        # Get metadata columns
+        metadata_columns = ['Date', 'HomeTeam', 'AwayTeam', 'FTHG', 'FTAG', 'FTR', 'Target',
+                          'Season', 'Month', 'MatchesInSeason', 'B365H', 'B365D', 'B365A']
         
-        # Place bets if opportunities exist
-        for bet_type, amount, edge in opportunities:
-            strategy.place_bet(
-                match_date, home_team, away_team,
-                predicted_probs, actual_result, odds,
-                bet_type, amount, edge
+        # Get numeric features only
+        numeric_features = features.select_dtypes(include=[np.number]).columns
+        feature_columns = [col for col in numeric_features if col not in metadata_columns]
+        
+        # For each match on this day
+        for idx, match in day_matches.iterrows():
+            home_team = match['HomeTeam']
+            away_team = match['AwayTeam']
+            actual_result = match['FTR']
+            
+            # Get features for this match
+            match_features = features[
+                (features['HomeTeam'] == home_team) & 
+                (features['AwayTeam'] == away_team) &
+                (features['Date'] == match_date)
+            ]
+            
+            if len(match_features) == 0:
+                print(f"Warning: No features found for match {home_team} vs {away_team}")
+                continue
+                
+            X_match = match_features[feature_columns]
+            X_match_scaled = scaler.transform(X_match)
+            
+            # Get model predictions
+            X_match_xgb = xgb.DMatrix(X_match_scaled)
+            probs = model.predict(X_match_xgb)[0]
+            predicted_probs = {'H': probs[2], 'D': probs[1], 'A': probs[0]}
+            
+            # Get odds
+            odds = {
+                'H': match['B365H'],
+                'D': match['B365D'],
+                'A': match['B365A']
+            }
+            
+            # Analyze betting opportunities
+            opportunities = strategy.analyze_betting_opportunity(
+                match_date, home_team, away_team, predicted_probs, odds
             )
-            match_info['BetType'] = bet_type
-            match_info['BetAmount'] = amount
-            match_info['Edge'] = edge
-            match_info['BetResult'] = bet_type == actual_result
-        
-        match_info['BankrollAfter'] = strategy.bankroll
-        betting_history.append(match_info)
+            
+            # Record match information
+            match_info = {
+                'Date': match_date,
+                'HomeTeam': home_team,
+                'AwayTeam': away_team,
+                'ActualResult': actual_result,
+                'HomeOdds': odds['H'],
+                'DrawOdds': odds['D'],
+                'AwayOdds': odds['A'],
+                'HomePred': predicted_probs['H'],
+                'DrawPred': predicted_probs['D'],
+                'AwayPred': predicted_probs['A'],
+                'BetPlaced': len(opportunities) > 0,
+                'BankrollBefore': strategy.bankroll
+            }
+            
+            # Place bets if opportunities exist
+            for bet_type, amount, edge in opportunities:
+                strategy.place_bet(
+                    match_date, home_team, away_team,
+                    predicted_probs, actual_result, odds,
+                    bet_type, amount, edge
+                )
+                match_info['BetType'] = bet_type
+                match_info['BetAmount'] = amount
+                match_info['Edge'] = edge
+                match_info['BetResult'] = bet_type == actual_result
+            
+            match_info['BankrollAfter'] = strategy.bankroll
+            betting_history.append(match_info)
     
     # Convert to DataFrame
     history_df = pd.DataFrame(betting_history)
@@ -193,4 +180,4 @@ def analyze_season(season: int = 2022):
         return history_df, strategy
 
 if __name__ == "__main__":
-    analyze_season(2022) 
+    analyze_season(2023) 
