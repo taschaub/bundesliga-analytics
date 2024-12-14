@@ -35,35 +35,37 @@ def analyze_season(season: int = 2023):
     # Store betting decisions and results
     betting_history = []
     
-    # Engineer features for all data up to the betting season
-    print("\nEngineering features...")
+    # Initialize with historical data and engineer initial features
+    print("\nEngineering initial features...")
     historical_data = df[df['Season'] < season].copy()
     feature_eng = FeatureEngineer(historical_data)
-    historical_features = feature_eng.engineer_features()
+    features = feature_eng.engineer_features()
     
     # Get metadata columns
     metadata_columns = ['Date', 'HomeTeam', 'AwayTeam', 'FTHG', 'FTAG', 'FTR', 'Target',
                        'Season', 'Month', 'MatchesInSeason', 'B365H', 'B365D', 'B365A']
     
     # Get numeric features only
-    numeric_features = historical_features.select_dtypes(include=[np.number]).columns
+    numeric_features = features.select_dtypes(include=[np.number]).columns
     feature_columns = [col for col in numeric_features if col not in metadata_columns]
     
     # For each match
     print("\nAnalyzing matches...")
+    total_matches = len(betting_season)
     for idx, match in betting_season.iterrows():
         match_date = pd.to_datetime(match['Date'])
         home_team = match['HomeTeam']
         away_team = match['AwayTeam']
         actual_result = match['FTR']
         
-        # Update historical data and features
+        # Update historical data
         historical_data = pd.concat([historical_data, pd.DataFrame([match])]).sort_values('Date')
-        feature_eng = FeatureEngineer(historical_data)
-        features = feature_eng.engineer_features()
+        
+        # Update features only for the new match
+        feature_eng.df = historical_data  # Update the dataframe
+        match_features = feature_eng.engineer_features_for_match(match)  # New method to calculate features for single match
         
         # Get features for this match
-        match_features = features.iloc[-1:]
         X_match = match_features[feature_columns]
         X_match_scaled = scaler.transform(X_match)
         
@@ -129,12 +131,14 @@ def analyze_season(season: int = 2023):
             if match_info['BetResult']:
                 print(f"Profit: ${match_info['Profit']:.2f}")
             print(f"Bankroll: ${strategy.bankroll:.2f}")
+        
+        # Print overall progress
+        if (idx + 1) % 10 == 0:
+            print(f"Processed {idx + 1}/{total_matches} matches...")
     
-    # Convert to DataFrame
+    # Create visualizations and summary
+    print("\nGenerating summary and visualizations...")
     history_df = pd.DataFrame(betting_history)
-    
-    # Create visualizations
-    plt.style.use('default')
     
     # 1. Bankroll Evolution
     plt.figure(figsize=(15, 6))
@@ -183,8 +187,8 @@ def analyze_season(season: int = 2023):
             print(f"Result: {'Won' if bet['BetResult'] else 'Lost'}")
             if bet['BetResult']:
                 print(f"Profit: ${bet['Profit']:.2f}")
-        
-        return history_df, strategy
+    
+    return history_df, strategy
 
 if __name__ == "__main__":
     analyze_season(2023) 
