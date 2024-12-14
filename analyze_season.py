@@ -99,7 +99,12 @@ def analyze_season(season: int = 2023):
             'DrawPred': predicted_probs['D'],
             'AwayPred': predicted_probs['A'],
             'BetPlaced': len(opportunities) > 0,
-            'BankrollBefore': strategy.bankroll
+            'BankrollBefore': strategy.bankroll,
+            'BetType': None,
+            'BetAmount': 0,
+            'Edge': 0,
+            'BetResult': None,
+            'Profit': 0
         }
         
         # Place bets if opportunities exist
@@ -121,24 +126,34 @@ def analyze_season(season: int = 2023):
         match_info['BankrollAfter'] = strategy.bankroll
         betting_history.append(match_info)
         
-        # Print progress
+        # Print analysis for every match
+        print(f"\n{match_date.date()} - {home_team} vs {away_team}")
+        print(f"Odds: H:{odds['H']:.2f} D:{odds['D']:.2f} A:{odds['A']:.2f}")
+        print(f"Predictions: H:{predicted_probs['H']:.1%} D:{predicted_probs['D']:.1%} A:{predicted_probs['A']:.1%}")
+        
         if len(opportunities) > 0:
-            print(f"\n{match_date.date()} - {home_team} vs {away_team}")
-            print(f"Odds: H:{odds['H']:.2f} D:{odds['D']:.2f} A:{odds['A']:.2f}")
+            print(f"Decision: BET PLACED")
             print(f"Bet: {match_info['BetType']} ${match_info['BetAmount']:.2f} " +
                   f"(Edge: {match_info['Edge']*100:.1f}%)")
             print(f"Result: {'Won' if match_info['BetResult'] else 'Lost'}")
             if match_info['BetResult']:
                 print(f"Profit: ${match_info['Profit']:.2f}")
-            print(f"Bankroll: ${strategy.bankroll:.2f}")
+        else:
+            print("Decision: NO BET (insufficient edge)")
+            
+        print(f"Bankroll: ${strategy.bankroll:.2f}")
+        print("-" * 50)
         
         # Print overall progress
         if (idx + 1) % 10 == 0:
-            print(f"Processed {idx + 1}/{total_matches} matches...")
+            print(f"\nProcessed {idx + 1}/{total_matches} matches...")
     
     # Create visualizations and summary
     print("\nGenerating summary and visualizations...")
     history_df = pd.DataFrame(betting_history)
+    
+    # Save ALL matches history
+    history_df.to_csv(f'match_history_season_{season}.csv', index=False)
     
     # 1. Bankroll Evolution
     plt.figure(figsize=(15, 6))
@@ -155,12 +170,14 @@ def analyze_season(season: int = 2023):
     
     # 2. Betting Analysis
     bet_matches = history_df[history_df['BetPlaced']]
+    no_bet_matches = history_df[~history_df['BetPlaced']]
     total_matches = len(history_df)
     bets_placed = len(bet_matches)
     
     print(f"\nBetting Analysis for Season {season}")
     print(f"Total Matches: {total_matches}")
     print(f"Bets Placed: {bets_placed} ({bets_placed/total_matches*100:.1f}%)")
+    print(f"Matches Skipped: {len(no_bet_matches)} ({len(no_bet_matches)/total_matches*100:.1f}%)")
     
     if bets_placed > 0:
         print("\nBetting Performance:")
@@ -174,8 +191,14 @@ def analyze_season(season: int = 2023):
         print("\nBet Size Distribution:")
         print(bet_matches['BetAmount'].describe())
         
-        # Save detailed betting history
-        bet_matches.to_csv(f'betting_history_season_{season}.csv', index=False)
+        # Analyze bet types
+        print("\nBet Type Distribution:")
+        bet_type_counts = bet_matches['BetType'].value_counts()
+        for bet_type in ['H', 'D', 'A']:
+            if bet_type in bet_type_counts:
+                count = bet_type_counts[bet_type]
+                wins = len(bet_matches[(bet_matches['BetType'] == bet_type) & (bet_matches['BetResult'] == True)])
+                print(f"{bet_type}: {count} bets, {wins/count*100:.1f}% win rate")
         
         # Print example bets
         print("\nExample Bets (First 5):")

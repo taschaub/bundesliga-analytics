@@ -15,6 +15,8 @@ class FeatureEngineer:
         self.form_cache = {}          # (team, date) -> form dict
         self.h2h_cache = {}           # (team1, team2, date) -> h2h stats
         self.goals_cache = {}         # (team, date) -> goals stats
+        self.momentum_cache = {}      # (team, date) -> momentum features
+        self.rest_cache = {}          # (team, date) -> rest days
         
     def _get_team_rating(self, team: str, date: pd.Timestamp) -> dict:
         """Get cached team rating or calculate if not exists."""
