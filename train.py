@@ -6,8 +6,6 @@ from sklearn.metrics import accuracy_score, classification_report, confusion_mat
 import joblib
 from src.feature_engineering import FeatureEngineer
 from src.data_preparation import DataPreparator
-from src.betting_strategy import BettingStrategy
-import matplotlib.pyplot as plt
 
 def train_model(X_train, y_train, X_val, y_val):
     """Train model to output probabilities."""
@@ -42,91 +40,17 @@ def train_model(X_train, y_train, X_val, y_val):
     
     return model
 
-def evaluate_predictions(model, X_test, y_test, df_test, odds_test):
-    """Evaluate predictions and simulate betting strategy."""
-    print("\nEvaluating predictions and betting strategy...")
+def evaluate_model(model, X_test, y_test):
+    """Basic model evaluation."""
+    print("\nEvaluating model...")
     
     # Make predictions
     dtest = xgb.DMatrix(X_test)
-    y_pred_proba = model.predict(dtest)
-    y_pred = np.argmax(y_pred_proba, axis=1)
+    y_pred = np.argmax(model.predict(dtest), axis=1)
     
-    # Initialize betting strategy with more conservative parameters
-    strategy = BettingStrategy(bankroll=1000, kelly_fraction=0.02)
-    
-    # Reset DataFrame index to make sure we can iterate properly
-    df_test = df_test.reset_index(drop=True)
-    
-    # Simulate betting
-    for i in range(len(y_test)):
-        match_date = pd.to_datetime(df_test.loc[i, 'Date'])
-        home_team = df_test.loc[i, 'HomeTeam']
-        away_team = df_test.loc[i, 'AwayTeam']
-        
-        # Convert probabilities to dict
-        probs = {
-            'H': y_pred_proba[i, 2],  # Home win probability
-            'D': y_pred_proba[i, 1],  # Draw probability
-            'A': y_pred_proba[i, 0]   # Away win probability
-        }
-        
-        # Get real Bet365 odds for this match
-        match_odds = {
-            'H': odds_test.iloc[i]['HomeOdds'],
-            'D': odds_test.iloc[i]['DrawOdds'],
-            'A': odds_test.iloc[i]['AwayOdds']
-        }
-        
-        # Get actual result
-        actual_result = 'H' if y_test.iloc[i] == 2 else ('D' if y_test.iloc[i] == 1 else 'A')
-        
-        # Analyze betting opportunities
-        opportunities = strategy.analyze_betting_opportunity(
-            match_date,
-            home_team,
-            away_team,
-            probs,
-            match_odds
-        )
-        
-        # Place bets
-        for bet_type, bet_amount, edge in opportunities:
-            strategy.place_bet(
-                match_date,
-                home_team,
-                away_team,
-                probs,
-                actual_result,
-                match_odds,
-                bet_type,
-                bet_amount,
-                edge
-            )
-    
-    # Get betting summary
-    summary = strategy.get_betting_summary()
-    
-    # Print betting performance
-    print("\nBetting Performance Summary:")
-    print(f"Total Bets: {summary['total_bets']}")
-    print(f"Win Rate: {summary['win_rate']:.1f}%")
-    print(f"Total Profit: ${summary['total_profit']:.2f}")
-    print(f"ROI: {summary['roi']:.1f}%")
-    print(f"Final Bankroll: ${summary['final_bankroll']:.2f}")
-    
-    print("\nMonthly Profits:")
-    print(summary['monthly_profits'])
-    
-    print("\nWin Rates by Bet Type:")
-    for bet_type, win_rate in summary['win_rates_by_type'].items():
-        print(f"{bet_type}: {win_rate:.1f}%")
-    
-    # Plot performance
-    strategy.plot_performance()
-    
-    # Calculate overall accuracy metrics
+    # Calculate metrics
     accuracy = accuracy_score(y_test, y_pred)
-    print("\nModel Performance:")
+    print(f"\nModel Performance:")
     print(f"Overall Accuracy: {accuracy:.3f}")
     
     print("\nClassification Report:")
@@ -135,7 +59,7 @@ def evaluate_predictions(model, X_test, y_test, df_test, odds_test):
     print("\nConfusion Matrix:")
     print(confusion_matrix(y_test, y_pred))
     
-    return accuracy, strategy
+    return accuracy
 
 def main():
     # Load and prepare data
@@ -169,14 +93,6 @@ def main():
     X_test = X[test_mask]
     y_train = y[train_mask]
     y_test = y[test_mask]
-    df_test = df_features[test_mask].copy()
-    
-    # Create odds DataFrame from real Bet365 odds
-    odds_test = pd.DataFrame({
-        'HomeOdds': df_test['B365H'],
-        'DrawOdds': df_test['B365D'],
-        'AwayOdds': df_test['B365A']
-    })
     
     print(f"\nTraining on seasons: {df_features[train_mask]['Season'].unique()}")
     print(f"Testing on season: {last_season}")
@@ -189,27 +105,15 @@ def main():
     # Train model
     model = train_model(X_train_scaled, y_train, X_test_scaled, y_test)
     
-    # Evaluate model and betting strategy
-    accuracy, strategy = evaluate_predictions(model, X_test_scaled, y_test, df_test, odds_test)
+    # Evaluate model
+    accuracy = evaluate_model(model, X_test_scaled, y_test)
     
     # Save model and scaler
     print("\nSaving model and scaler...")
     joblib.dump(model, 'models/model.joblib')
     joblib.dump(scaler, 'models/scaler.joblib')
     
-    # Plot monthly profit distribution
-    plt.figure(figsize=(12, 6))
-    monthly_profits = strategy.get_betting_summary()['monthly_profits']
-    monthly_profits.plot(kind='bar')
-    plt.title('Monthly Betting Profits')
-    plt.xlabel('Month')
-    plt.ylabel('Profit ($)')
-    plt.xticks(rotation=45)
-    plt.tight_layout()
-    plt.savefig('monthly_profits.png')
-    plt.close()
-    
-    return model, scaler, accuracy, strategy
+    return model, scaler, accuracy
 
 if __name__ == "__main__":
     main()

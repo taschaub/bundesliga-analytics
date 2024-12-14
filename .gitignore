@@ -9,3 +9,7 @@ bund/
 data/*.csv
 models/
 .env
+bankroll_evolution.png
+betting_history_season_2023.csv
+betting_performance.png
+monthly_profits.png
