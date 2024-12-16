@@ -52,7 +52,7 @@ def analyze_season(season: int = 2023):
     # For each match
     print("\nAnalyzing matches...")
     total_matches = len(betting_season)
-    for idx, match in betting_season.iterrows():
+    for match_num, (idx, match) in enumerate(betting_season.iterrows(), 1):
         match_date = pd.to_datetime(match['Date'])
         home_team = match['HomeTeam']
         away_team = match['AwayTeam']
@@ -145,8 +145,8 @@ def analyze_season(season: int = 2023):
         print("-" * 50)
         
         # Print overall progress
-        if (idx + 1) % 10 == 0:
-            print(f"\nProcessed {idx + 1}/{total_matches} matches...")
+        if match_num % 10 == 0:
+            print(f"\nProcessed {match_num}/{total_matches} matches...")
     
     # Create visualizations and summary
     print("\nGenerating summary and visualizations...")
